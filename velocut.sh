@@ -45,7 +45,7 @@ safe_time_for_name() { echo "$1" | tr ':' '-'; }
 prompt_time() {
   # $1 = label (ex "Début" / "Fin  "), $2 = exemple (ex "0:12 ou 00:00:12"), $3 = var cible
   local text="  ⏱️  $1 (ex $2)"
-  printf "%-46s : " "$text"
+  printf "%-46s: " "$text"   # <- alignement du ":" corrigé (pas d'espace avant le deux-points)
   read -r "$3"
 }
 
@@ -87,7 +87,7 @@ declare -a STARTS ENDS OUTFILES
 i=1
 while (( i <= NUM )); do
   echo "${BOLD}— Segment #$i —${RESET}"
-  # Prompts alignés au niveau du ":"
+  # Prompts alignés
   prompt_time "Début" "0:12 ou 00:00:12" START
   prompt_time "Fin  " "0:17 ou 00:00:17" END
 
@@ -150,7 +150,7 @@ wait  # attend la fin de tous les jobs
 rule
 echo "${BOLD}🎉 Terminé !${RESET}"
 
-# Petit récap non intrusif (sans logs)
+# Récap (sans logs)
 if (( NUM == 1 )); then
   if [[ -f "${OUTFILES[0]}" ]]; then
     echo "  • ${GREEN}${OUTFILES[0]}${RESET}"
