@@ -42,13 +42,6 @@ time_to_seconds() {
 
 safe_time_for_name() { echo "$1" | tr ':' '-'; }
 
-prompt_time() {
-  # $1 = label (ex "Début" / "Fin  "), $2 = exemple (ex "0:12 ou 00:00:12"), $3 = var cible
-  local text="  ⏱️  $1 (ex $2)"
-  printf "%-46s: " "$text"   # <- alignement du ":" corrigé (pas d'espace avant le deux-points)
-  read -r "$3"
-}
-
 # ----- Checks -----
 banner
 rule
@@ -87,9 +80,10 @@ declare -a STARTS ENDS OUTFILES
 i=1
 while (( i <= NUM )); do
   echo "${BOLD}— Segment #$i —${RESET}"
-  # Prompts alignés
-  prompt_time "Début" "0:12 ou 00:00:12" START
-  prompt_time "Fin  " "0:17 ou 00:00:17" END
+
+  # Prompts simples (retour à l’affichage “comme avant”)
+  read -rp "  ⏱️  Début (ex 0:12 ou 00:00:12) : " START
+  read -rp "  ⏱️  Fin    (ex 0:17 ou 00:00:17) : " END
 
   SSEC="$(time_to_seconds "$START")" || SSEC=-1
   ESEC="$(time_to_seconds "$END")"   || ESEC=-1
