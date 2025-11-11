@@ -5,6 +5,7 @@
 # - Demande le nombre de segments puis start/end pour chacun (UI identique)
 # - EXÉCUTION OPTIMISÉE: lance les exports en PARALLÈLE (jusqu'au nb de CPU)
 # - Pas de ré-encodage: ultra rapide, qualité identique (-c copy)
+# - NEW: chaque extrait hérite de la date/heure d'origine + offset de début
 
 # ----- Couleurs & UI -----
 BOLD="$(printf '\033[1m')"; DIM="$(printf '\033[2m')"; RESET="$(printf '\033[0m')"
@@ -42,6 +43,31 @@ time_to_seconds() {
 
 safe_time_for_name() { echo "$1" | tr ':' '-'; }
 
+# --- NEW: récupère l'epoch de base depuis metadata MP4 (creation_time) ou FS ---
+get_base_epoch() {
+  local ct epoch
+  # 1) format tag
+  ct="$(ffprobe -v error -show_entries format_tags=creation_time -of default=nw=1:nk=1 "$INPUT_ABS" 2>/dev/null | head -n1)"
+  # 2) stream tag (fallback)
+  if [[ -z "$ct" ]]; then
+    ct="$(ffprobe -v error -select_streams v:0 -show_entries stream_tags=creation_time -of default=nw=1:nk=1 "$INPUT_ABS" 2>/dev/null | head -n1)"
+  fi
+  if [[ -n "$ct" ]]; then
+    # exemples: 2025-11-11T08:12:34Z  |  2025-11-11T08:12:34.000000Z  |  2025-11-11T08:12:34+01:00
+    ct="${ct/T/ }"
+    ct="${ct%%.*}"                # drop microsecondes si présentes
+    ct="${ct/Z/ +0000}"           # Z -> +0000
+    [[ "$ct" =~ \+[0-9]{2}:[0-9]{2}$ ]] && ct="${ct/:/}"  # +01:00 -> +0100
+    epoch="$(date -j -f "%Y-%m-%d %H:%M:%S %z" "$ct" "+%s" 2>/dev/null)"
+    if [[ -n "$epoch" ]]; then echo "$epoch"; return 0; fi
+  fi
+  # 3) FS birth time puis mtime en fallback
+  local b m
+  b="$(stat -f %B "$INPUT_ABS" 2>/dev/null)"
+  m="$(stat -f %m "$INPUT_ABS" 2>/dev/null)"
+  if [[ -n "$b" && "$b" != "0" ]]; then echo "$b"; else echo "$m"; fi
+}
+
 # ----- Checks -----
 banner
 rule
@@ -60,9 +86,18 @@ OUTDIR="${BASEDIR}/${STEM}_cuts"
 MAXJOBS="$(sysctl -n hw.ncpu 2>/dev/null || echo 4)"
 (( MAXJOBS < 1 )) && MAXJOBS=1
 
+# NEW: epoch de base (création originale)
+BASE_EPOCH="$(get_base_epoch)"
+[[ -z "$BASE_EPOCH" ]] && BASE_EPOCH=0
+
 echo "📄 Fichier source : ${CYAN}$INPUT_ABS${RESET}"
 echo "📂 Dossier sortie (si >1 segment) : ${CYAN}$OUTDIR${RESET}"
 echo "🧠 Concurrence    : ${CYAN}${MAXJOBS} job(s) en parallèle${RESET}"
+if (( BASE_EPOCH > 0 )); then
+  echo "🕒 Base date/heure : ${CYAN}$(date -r "$BASE_EPOCH" "+%Y-%m-%d %H:%M:%S %Z")${RESET}"
+else
+  echo "🕒 Base date/heure : ${YELLOW}indisponible (fallback FS/actuelle)${RESET}"
+fi
 rule
 
 # Nombre de segments
@@ -76,13 +111,13 @@ echo "${BOLD}OK, on prépare ${NUM} segment(s).${RESET}"
 rule
 
 # On collecte d'abord tous les segments, puis on lance en parallèle
-declare -a STARTS ENDS OUTFILES
+declare -a STARTS ENDS OUTFILES STARTSECS
 i=1
 while (( i <= NUM )); do
   echo "${BOLD}— Segment #$i —${RESET}"
 
-  # Prompts simples (retour à l’affichage “comme avant”)
-  read -rp "  ⏱️  Début (ex 0:12 ou 00:00:12) : " START
+  # Prompts simples
+  read -rp "  ⏱️  Début  (ex 0:12 ou 00:00:12) : " START
   read -rp "  ⏱️  Fin    (ex 0:17 ou 00:00:17) : " END
 
   SSEC="$(time_to_seconds "$START")" || SSEC=-1
@@ -106,6 +141,7 @@ while (( i <= NUM )); do
   STARTS+=("$START")
   ENDS+=("$END")
   OUTFILES+=("$OUTFILE")
+  STARTSECS+=("$SSEC")
   ((i++))
   rule
 done
@@ -128,10 +164,32 @@ for idx in "${!OUTFILES[@]}"; do
   START="${STARTS[$idx]}"
   END="${ENDS[$idx]}"
   OUTFILE="${OUTFILES[$idx]}"
+  OFFSET="${STARTSECS[$idx]}"
+
+  # NEW: calcule la date/heure cible = base + offset début
+  if (( BASE_EPOCH > 0 )); then
+    TARGET_EPOCH=$(( BASE_EPOCH + OFFSET ))
+    CT_ISO_UTC="$(date -u -r "$TARGET_EPOCH" "+%Y-%m-%dT%H:%M:%SZ")"
+    TOUCH_STAMP="$(date -r "$TARGET_EPOCH" "+%Y%m%d%H%M.%S")"
+  else
+    CT_ISO_UTC=""
+    TOUCH_STAMP=""
+  fi
 
   wait_for_slot
   {
-    if ffmpeg -nostdin -hide_banner -loglevel error -y -ss "$START" -to "$END" -i "$INPUT_ABS" -c copy "$OUTFILE"; then
+    # Ajoute metadata container creation_time si dispo, sinon simple copy
+    if [[ -n "$CT_ISO_UTC" ]]; then
+      ffmpeg -nostdin -hide_banner -loglevel error -y -ss "$START" -to "$END" -i "$INPUT_ABS" \
+             -metadata creation_time="$CT_ISO_UTC" -c copy "$OUTFILE"
+    else
+      ffmpeg -nostdin -hide_banner -loglevel error -y -ss "$START" -to "$END" -i "$INPUT_ABS" \
+             -c copy "$OUTFILE"
+    fi
+
+    if [[ -f "$OUTFILE" ]]; then
+      # Met à jour l'horodatage fichier (mtime) pour le Finder/tri
+      if [[ -n "$TOUCH_STAMP" ]]; then touch -t "$TOUCH_STAMP" "$OUTFILE"; fi
       echo "✅ Créé → ${GREEN}${OUTFILE}${RESET}"
     else
       echo "❌ ${RED}Échec ffmpeg${RESET} pour $START → $END"
