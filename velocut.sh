@@ -51,8 +51,8 @@ OUTDIR="$(dirname "$INPUT_ABS")/${STEM}_cuts"
 LOGDIR="${OUTDIR}/_logs"
 mkdir -p "$OUTDIR" "$LOGDIR"
 
-# Concurrence auto: nb de CPU (override possible via VELOCUT_JOBS)
-MAXJOBS="${VELOCUT_JOBS:-$(sysctl -n hw.ncpu 2>/dev/null || echo 4)}"
+# Concurrence auto: utilise 100% des CPU dispo
+MAXJOBS="$(sysctl -n hw.ncpu 2>/dev/null || echo 4)"
 (( MAXJOBS < 1 )) && MAXJOBS=1
 
 echo "📄 Fichier source : ${CYAN}$INPUT_ABS${RESET}"
@@ -144,5 +144,4 @@ else
 fi
 
 echo ""
-echo "${DIM}Astuce: définis ${BOLD}VELOCUT_JOBS${DIM} pour régler la parallélisation (ex: VELOCUT_JOBS=6 ./velocut.sh clip.mp4).${RESET}"
 echo "${DIM}Glisse ces clips dans Final Cut (import « laisser à l’emplacement actuel »).${RESET}"
