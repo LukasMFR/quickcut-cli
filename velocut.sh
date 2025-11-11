@@ -2,9 +2,9 @@
 
 # === velocut.sh — découpe rapide de segments vidéo (GoPro friendly) ===
 # Usage: ./velocut.sh <video.mp4>
-# - Demande le nombre de segments
-# - Pour chaque segment: start → end (ex: 0:12, 1:02:03)
-# - Exporte des fichiers sans ré-encodage (ultra rapide, qualité identique)
+# - Demande le nombre de segments puis start/end pour chacun (UI identique)
+# - EXÉCUTION OPTIMISÉE: lance les exports en PARALLÈLE (jusqu'au nb de CPU)
+# - Pas de ré-encodage: ultra rapide, qualité identique (-c copy)
 
 # ----- Couleurs & UI -----
 BOLD="$(printf '\033[1m')"; DIM="$(printf '\033[2m')"; RESET="$(printf '\033[0m')"
@@ -18,7 +18,6 @@ banner() {
 }
 
 die() { echo "${RED}❌ $*${RESET}"; exit 1; }
-
 have() { command -v "$1" >/dev/null 2>&1; }
 
 time_to_seconds() {
@@ -32,15 +31,11 @@ time_to_seconds() {
   else
     hh="$a"; mm="$b"; ss="$c"
   fi
-  # Nettoyage chiffres
   hh="${hh//[^0-9]/}"; mm="${mm//[^0-9]/}"; ss="${ss//[^0-9]/}"
   echo $((10#$hh*3600 + 10#$mm*60 + 10#$ss))
 }
 
-safe_time_for_name() {
-  # Remplace ":" par "-" pour un nom de fichier clean
-  echo "$1" | tr ':' '-'
-}
+safe_time_for_name() { echo "$1" | tr ':' '-'; }
 
 # ----- Checks -----
 banner
@@ -50,14 +45,19 @@ INPUT="$1"
 [[ -n "$INPUT" ]] || die "Usage: ${CYAN}$0 <video.mp4>${RESET}"
 [[ -f "$INPUT" ]] || die "Fichier introuvable: ${YELLOW}$INPUT${RESET}"
 
-# Infos chemin
 INPUT_ABS="$(cd "$(dirname "$INPUT")" && pwd)/$(basename "$INPUT")"
 STEM="$(basename "${INPUT_ABS%.*}")"
 OUTDIR="$(dirname "$INPUT_ABS")/${STEM}_cuts"
-mkdir -p "$OUTDIR"
+LOGDIR="${OUTDIR}/_logs"
+mkdir -p "$OUTDIR" "$LOGDIR"
+
+# Concurrence auto: nb de CPU (override possible via VELOCUT_JOBS)
+MAXJOBS="${VELOCUT_JOBS:-$(sysctl -n hw.ncpu 2>/dev/null || echo 4)}"
+(( MAXJOBS < 1 )) && MAXJOBS=1
 
 echo "📄 Fichier source : ${CYAN}$INPUT_ABS${RESET}"
 echo "📂 Dossier sortie : ${CYAN}$OUTDIR${RESET}"
+echo "🧠 Concurrence    : ${CYAN}${MAXJOBS} job(s) en parallèle${RESET}"
 echo ""
 
 # Nombre de segments
@@ -66,20 +66,18 @@ while true; do
   [[ "$NUM" =~ ^[0-9]+$ ]] && (( NUM > 0 )) && break
   echo "${YELLOW}⚠️  Entre un entier > 0${RESET}"
 done
-
 echo ""
-echo "${BOLD}OK, on découpe ${NUM} segment(s).${RESET}"
+echo "${BOLD}OK, on prépare ${NUM} segment(s).${RESET}"
 
+# On collecte d'abord tous les segments (UI identique), puis on lance en parallèle
+declare -a STARTS ENDS OUTFILES
 i=1
-CREATED=()
-
 while (( i <= NUM )); do
   echo ""
   echo "${BOLD}— Segment #$i —${RESET}"
   read -rp "  ⏱️  Début (ex 0:12 ou 00:00:12) : " START
   read -rp "  ⏱️  Fin    (ex 0:17 ou 00:00:17) : " END
 
-  # Validations simples
   SSEC="$(time_to_seconds "$START")" || SSEC=-1
   ESEC="$(time_to_seconds "$END")"   || ESEC=-1
   if (( SSEC < 0 || ESEC < 0 || ESEC <= SSEC )); then
@@ -91,22 +89,60 @@ while (( i <= NUM )); do
   END_TAG="$(safe_time_for_name "$END")"
   OUTFILE="${OUTDIR}/${STEM}_part$(printf '%02d' "$i")__${START_TAG}-${END_TAG}.mp4"
 
-  echo "🚀 Extraction ${CYAN}$START → $END${RESET} → ${GREEN}$(basename "$OUTFILE")${RESET}"
-  # -c copy = pas de ré-encodage (rapide, sans perte). -ss/-to AVANT -i = découpe rapide.
-  if ffmpeg -hide_banner -loglevel error -y -ss "$START" -to "$END" -i "$INPUT_ABS" -c copy "$OUTFILE"; then
-    echo "${GREEN}✅ OK : ${OUTFILE}${RESET}"
-    CREATED+=("$OUTFILE")
-    i=$((i+1))
-  else
-    echo "${RED}❌ Échec ffmpeg pour ce segment. Vérifie les temps et réessaie.${RESET}"
-  fi
+  STARTS+=("$START")
+  ENDS+=("$END")
+  OUTFILES+=("$OUTFILE")
+  i=$((i+1))
 done
+
+echo ""
+echo "${BOLD}🚀 Lancement des exports en parallèle…${RESET}"
+
+# Attendre un créneau dans le pool
+wait_for_slot() {
+  while (( $(jobs -pr | wc -l | tr -d ' ') >= MAXJOBS )); do
+    sleep 0.1
+  done
+}
+
+CREATED=()
+for idx in "${!OUTFILES[@]}"; do
+  START="${STARTS[$idx]}"
+  END="${ENDS[$idx]}"
+  OUTFILE="${OUTFILES[$idx]}"
+  LOG="${LOGDIR}/$(basename "$OUTFILE").log"
+
+  wait_for_slot
+  {
+    echo "▶️  $(date)  $START → $END  → $(basename "$OUTFILE")"
+    if ffmpeg -nostdin -hide_banner -loglevel error -y -ss "$START" -to "$END" -i "$INPUT_ABS" -c copy "$OUTFILE" 2>>"$LOG"; then
+      echo "✅ FIN $(date) $(basename "$OUTFILE")" >>"$LOG"
+      printf "%s\0" "$OUTFILE" >> "${LOGDIR}/__created.list"
+    else
+      echo "❌ ÉCHEC $(date) $(basename "$OUTFILE")" >>"$LOG"
+    fi
+  } &
+
+  echo "🧵 Job lancé: ${CYAN}$START → $END${RESET} → ${GREEN}$(basename "$OUTFILE")${RESET}"
+done
+
+wait  # attend la fin de tous les jobs
+
+# Récup liste des fichiers créés
+if [[ -f "${LOGDIR}/__created.list" ]]; then
+  while IFS= read -r -d '' f; do CREATED+=("$f"); done < "${LOGDIR}/__created.list"
+fi
 
 echo ""
 echo "${BOLD}🎉 Terminé ! Segments créés :${RESET}"
-for f in "${CREATED[@]}"; do
-  echo "  • ${GREEN}$f${RESET}"
-done
+if ((${#CREATED[@]}==0)); then
+  echo "  ${RED}Aucun segment généré. Consulte les logs: ${LOGDIR}${RESET}"
+else
+  for f in "${CREATED[@]}"; do
+    echo "  • ${GREEN}$f${RESET}"
+  done
+fi
 
 echo ""
-echo "${DIM}Astuce: glisse ces clips dans Final Cut (import en « laisser à l’emplacement actuel »).${RESET}"
+echo "${DIM}Astuce: définis ${BOLD}VELOCUT_JOBS${DIM} pour régler la parallélisation (ex: VELOCUT_JOBS=6 ./velocut.sh clip.mp4).${RESET}"
+echo "${DIM}Glisse ces clips dans Final Cut (import « laisser à l’emplacement actuel »).${RESET}"
