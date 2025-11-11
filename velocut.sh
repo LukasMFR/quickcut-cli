@@ -49,7 +49,6 @@ INPUT_ABS="$(cd "$(dirname "$INPUT")" && pwd)/$(basename "$INPUT")"
 STEM="$(basename "${INPUT_ABS%.*}")"
 OUTDIR="$(dirname "$INPUT_ABS")/${STEM}_cuts"
 LOGDIR="${OUTDIR}/_logs"
-mkdir -p "$OUTDIR" "$LOGDIR"
 
 # Concurrence auto: utilise 100% des CPU dispo
 MAXJOBS="$(sysctl -n hw.ncpu 2>/dev/null || echo 4)"
@@ -97,6 +96,9 @@ done
 
 echo ""
 echo "${BOLD}🚀 Lancement des exports en parallèle…${RESET}"
+
+# 👉 Création "juste-à-temps" des dossiers (évite les répertoires vides si Ctrl-C avant)
+mkdir -p "$OUTDIR" "$LOGDIR" || die "Impossible de créer ${OUTDIR}"
 
 # Attendre un créneau dans le pool
 wait_for_slot() {
