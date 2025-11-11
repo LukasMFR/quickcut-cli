@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
-# === velocut.sh — découpe rapide de segments vidéo (GoPro friendly) ===
-# Usage: ./velocut.sh <video.mp4>
+# === quickcut.sh — découpe rapide de segments vidéo (ffmpeg) ===
+# Usage: ./quickcut.sh <video.mp4>
 # - Demande le nombre de segments puis start/end pour chacun (UI identique)
 # - EXÉCUTION OPTIMISÉE: lance les exports en PARALLÈLE (jusqu'au nb de CPU)
 # - Pas de ré-encodage: ultra rapide, qualité identique (-c copy)
@@ -13,7 +13,7 @@ RED="$(printf '\033[31m')"; GREEN="$(printf '\033[32m')"; YELLOW="$(printf '\033
 
 banner() {
   echo ""
-  echo "${BOLD}🎬  VELOCUT — Cutter express (ffmpeg)${RESET}"
+  echo "${BOLD}🎬  QUICKCUT — Cutter express (ffmpeg)${RESET}"
   echo "${DIM}Astuce: formats temps acceptés  mm:ss  ou  hh:mm:ss (ex: 0:12, 01:12:03)${RESET}"
   echo ""
 }
