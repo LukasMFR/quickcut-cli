@@ -43,6 +43,70 @@ time_to_seconds() {
 
 safe_time_for_name() { echo "$1" | tr ':' '-'; }
 
+# --- Nouveau : support fichier texte de segments ---
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+SEGMENTS_TXT_NAME="quickcut_segments.txt"
+
+load_segments_from_txt() {
+  local txt="$1"
+  [[ -f "$txt" ]] || die "Fichier texte introuvable: ${YELLOW}$txt${RESET}"
+
+  echo "📑 Lecture des segments depuis: ${CYAN}$txt${RESET}"
+  rule
+
+  local -a LINES=()
+  local line
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    # trim espaces
+    line="${line#"${line%%[![:space:]]*}"}"
+    line="${line%"${line##*[![:space:]]}"}"
+    [[ -z "$line" ]] && continue  # ignore lignes vides
+    LINES+=("$line")
+  done < "$txt"
+
+  local count="${#LINES[@]}"
+  (( count > 0 )) || die "Le fichier texte ne contient aucun timecode."
+
+  (( count % 2 == 0 )) || die "Le fichier texte doit contenir un nombre PAIR de lignes non vides (début/fin)."
+
+  NUM=$((count / 2))
+  echo "✂️  Segments détectés dans le fichier: ${CYAN}$NUM${RESET}"
+  rule
+
+  # Remplit STARTS/ENDS/STARTSECS/ENDSECS/OUTFILES comme dans le mode manuel
+  local idx=0
+  local seg=1
+  while (( idx < count )); do
+    local START="${LINES[$idx]}";   ((idx++))
+    local END="${LINES[$idx]}";     ((idx++))
+
+    local SSEC ESEC
+    SSEC="$(time_to_seconds "$START")" || SSEC=-1
+    ESEC="$(time_to_seconds "$END")"   || ESEC=-1
+    if (( SSEC < 0 || ESEC < 0 || ESEC <= SSEC )); then
+      die "Temps invalides dans le fichier texte pour le segment #$seg : '$START' → '$END'"
+    fi
+
+    local START_TAG END_TAG OUTFILE
+    START_TAG="$(safe_time_for_name "$START")"
+    END_TAG="$(safe_time_for_name "$END")"
+
+    if (( NUM == 1 )); then
+      OUTFILE="${BASEDIR}/${STEM}__${START_TAG}-${END_TAG}.mp4"
+    else
+      OUTFILE="${OUTDIR}/${STEM}_part$(printf '%02d' "$seg")__${START_TAG}-${END_TAG}.mp4"
+    fi
+
+    STARTS+=("$START"); ENDS+=("$END")
+    OUTFILES+=("$OUTFILE")
+    STARTSECS+=("$SSEC"); ENDSECS+=("$ESEC")
+
+    echo "• Segment #$seg : ${CYAN}$START → $END${RESET} → $(basename "$OUTFILE")"
+    ((seg++))
+  done
+  rule
+}
+
 # ----- Checks -----
 banner
 rule
@@ -77,50 +141,81 @@ if [[ -n "$SRC_BIRTH_EPOCH" && "$SRC_BIRTH_EPOCH" -gt 0 ]]; then
 fi
 rule
 
-# Nombre de segments
-while true; do
-  read -rp "✂️  Nombre de segments à extraire : " NUM
-  [[ "$NUM" =~ ^[0-9]+$ ]] && (( NUM > 0 )) && break
-  echo "${YELLOW}⚠️  Entre un entier > 0${RESET}"
-done
-echo ""
-echo "${BOLD}OK, on prépare ${NUM} segment(s).${RESET}"
-rule
-
-# On collecte d'abord tous les segments, puis on lance en parallèle
+# --- Choix du mode de saisie des segments ---
 declare -a STARTS ENDS OUTFILES STARTSECS ENDSECS
-i=1
-while (( i <= NUM )); do
-  echo "${BOLD}— Segment #$i —${RESET}"
+NUM=0
 
-  # Prompts simples
-  read -rp "  ⏱️  Début  (ex 0:12 ou 00:00:12) : " START
-  read -rp "  ⏱️  Fin    (ex 0:17 ou 00:00:17) : " END
+DEFAULT_TXT="${SCRIPT_DIR}/${SEGMENTS_TXT_NAME}"
 
-  SSEC="$(time_to_seconds "$START")" || SSEC=-1
-  ESEC="$(time_to_seconds "$END")"   || ESEC=-1
-  if (( SSEC < 0 || ESEC < 0 || ESEC <= SSEC )); then
-    echo "${RED}❌ Temps invalides (fin doit être > début). On recommence ce segment.${RESET}"
-    rule
-    continue
-  fi
-
-  START_TAG="$(safe_time_for_name "$START")"
-  END_TAG="$(safe_time_for_name "$END")"
-
-  if (( NUM == 1 )); then
-    # 1 segment → pas de dossier, pas de "partXX" dans le nom
-    OUTFILE="${BASEDIR}/${STEM}__${START_TAG}-${END_TAG}.mp4"
+echo "${BOLD}Mode de saisie des segments :${RESET}"
+if [[ -f "$DEFAULT_TXT" ]]; then
+  echo "  1) Manuel (interactive)"
+  echo "  2) Fichier texte (défaut détecté : ${CYAN}$DEFAULT_TXT${RESET})"
+  read -rp "Choix [1/2] (Entrée = 2 si le fichier existe) : " MODE
+  if [[ -z "$MODE" || "$MODE" == "2" ]]; then
+    TXT_PATH="$DEFAULT_TXT"
+    load_segments_from_txt "$TXT_PATH"
   else
-    OUTFILE="${OUTDIR}/${STEM}_part$(printf '%02d' "$i")__${START_TAG}-${END_TAG}.mp4"
+    MODE="1"
   fi
+else
+  echo "  1) Manuel (interactive)"
+  echo "  2) Fichier texte (tu peux drag & drop un .txt ici)"
+  read -rp "Choix [1/2] (Entrée = 1) : " MODE
+  [[ -z "$MODE" ]] && MODE="1"
+  if [[ "$MODE" == "2" ]]; then
+    read -rp "Chemin du fichier texte (drag & drop accepté) : " TXT_PATH
+    # nettoyage des guillemets éventuels après drag & drop
+    TXT_PATH="${TXT_PATH%\"}"; TXT_PATH="${TXT_PATH#\"}"
+    load_segments_from_txt "$TXT_PATH"
+  fi
+fi
 
-  STARTS+=("$START"); ENDS+=("$END")
-  OUTFILES+=("$OUTFILE")
-  STARTSECS+=("$SSEC"); ENDSECS+=("$ESEC")
-  ((i++))
+# Si MODE manuel → on garde le comportement existant
+if [[ "$MODE" == "1" || "$NUM" -eq 0 ]]; then
+  # Nombre de segments
+  while true; do
+    read -rp "✂️  Nombre de segments à extraire : " NUM
+    [[ "$NUM" =~ ^[0-9]+$ ]] && (( NUM > 0 )) && break
+    echo "${YELLOW}⚠️  Entre un entier > 0${RESET}"
+  done
+  echo ""
+  echo "${BOLD}OK, on prépare ${NUM} segment(s).${RESET}"
   rule
-done
+
+  i=1
+  while (( i <= NUM )); do
+    echo "${BOLD}— Segment #$i —${RESET}"
+
+    # Prompts simples
+    read -rp "  ⏱️  Début  (ex 0:12 ou 00:00:12) : " START
+    read -rp "  ⏱️  Fin    (ex 0:17 ou 00:00:17) : " END
+
+    SSEC="$(time_to_seconds "$START")" || SSEC=-1
+    ESEC="$(time_to_seconds "$END")"   || ESEC=-1
+    if (( SSEC < 0 || ESEC < 0 || ESEC <= SSEC )); then
+      echo "${RED}❌ Temps invalides (fin doit être > début). On recommence ce segment.${RESET}"
+      rule
+      continue
+    fi
+
+    START_TAG="$(safe_time_for_name "$START")"
+    END_TAG="$(safe_time_for_name "$END")"
+
+    if (( NUM == 1 )); then
+      # 1 segment → pas de dossier, pas de "partXX" dans le nom
+      OUTFILE="${BASEDIR}/${STEM}__${START_TAG}-${END_TAG}.mp4"
+    else
+      OUTFILE="${OUTDIR}/${STEM}_part$(printf '%02d' "$i")__${START_TAG}-${END_TAG}.mp4"
+    fi
+
+    STARTS+=("$START"); ENDS+=("$END")
+    OUTFILES+=("$OUTFILE")
+    STARTSECS+=("$SSEC"); ENDSECS+=("$ESEC")
+    ((i++))
+    rule
+  done
+fi
 
 echo "${BOLD}🚀 Lancement des exports en parallèle…${RESET}"
 # Création du dossier uniquement si >1 segments
