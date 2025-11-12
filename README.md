@@ -11,10 +11,11 @@
 2. [⚙️ Prérequis](#️-prérequis)
 3. [📦 Installation](#-installation)
 4. [💻 Utilisation](#-utilisation)
-5. [🧩 Exemple complet](#-exemple-complet)
-6. [🧠 Détails techniques](#-détails-techniques)
-7. [🛠️ Structure du projet](#️-structure-du-projet)
-8. [📜 Licence](#-licence)
+5. [📄 Mode fichier texte](#-mode-fichier-texte)
+6. [🧩 Exemple complet](#-exemple-complet)
+7. [🧠 Détails techniques](#-détails-techniques)
+8. [🛠️ Structure du projet](#️-structure-du-projet)
+9. [📜 Licence](#-licence)
 
 ---
 
@@ -26,6 +27,7 @@
 ✅ Exploite **tous les cœurs CPU** du Mac pour accélérer le traitement  
 ✅ Interface CLI simple, lisible et colorée  
 ✅ Aucune dépendance exotique (seulement Bash + FFmpeg)  
+✅ Possibilité d’entrer les segments manuellement ou via fichier texte  
 ✅ Compatible macOS, Linux, et WSL  
 
 ---
@@ -36,7 +38,7 @@ Avant toute utilisation, assurez-vous que **FFmpeg** est installé :
 
 ```bash
 brew install ffmpeg
-````
+```
 
 ou sous Linux :
 
@@ -76,16 +78,69 @@ quickcut ma_video.mp4
 ./quickcut.sh <fichier_video>
 ```
 
-Le script :
+Le script propose deux modes :
 
-1. Vous demande combien de segments extraire
-2. Vous invite à entrer les horodatages de début et de fin
-3. Découpe les segments instantanément
-4. Conserve les métadonnées de la vidéo d’origine (dates et heures)
+### 1) Saisie manuelle
+
+Vous indiquez le nombre de segments, puis les horodatages de début et de fin.
+
+### 2) Saisie via fichier texte
+
+Vous pouvez fournir un fichier contenant :
+
+```
+04:24
+04:32
+
+05:06
+05:22
+
+07:17
+07:47
+```
+
+Alternative :
+
+* si un fichier nommé **quickcut_segments.txt** se trouve dans le même dossier que le script, il sera automatiquement proposé ;
+* s’il n’existe pas, le script peut le créer pour vous ;
+* vous pouvez aussi glisser-déposer un fichier `.txt` dans le Terminal.
+
+Les lignes sont lues par paires “début / fin”.
 
 ---
 
-### 🧩 Exemple complet
+## 📄 Mode fichier texte
+
+Le fichier texte doit contenir une liste de timecodes, l’un par ligne, regroupés par paires :
+
+```
+début
+fin
+
+début
+fin
+```
+
+Exemple :
+
+```
+04:24
+04:32
+
+07:17
+07:47
+```
+
+Le script :
+
+* lit toutes les paires valides
+* ignore automatiquement les lignes vides
+* signale toute paire incomplète
+* continue seulement si au moins un segment valide est présent
+
+---
+
+## 🧩 Exemple complet
 
 ```bash
 ./quickcut.sh GOPR1649.MP4
@@ -118,8 +173,10 @@ Astuce : formats temps acceptés mm:ss ou hh:mm:ss (ex: 0:12, 01:12:03)
 
 * **Langage** : Bash (POSIX-compatible)
 * **Découpe** : `ffmpeg -ss start -to end -c copy` → pas de recompression
-* **Horodatage** : synchronisation automatique des dates Finder et des métadonnées MP4
-* **Concurrence** : utilisation automatique de tous les cœurs CPU (`sysctl -n hw.ncpu`)
+* **Gestion du temps** : interprétation flexible des formats (`SS`, `MM:SS`, `HH:MM:SS`)
+* **Horodatage** : mise à jour automatique des dates Finder + métadonnée MP4 `creation_time`
+* **Concurrence** : exécution parallèle sur tous les cœurs CPU
+* **Modes de saisie** : interactif ou fichier texte
 * **Compatibilité** :
 
   * macOS (Intel & Apple Silicon)
@@ -132,9 +189,10 @@ Astuce : formats temps acceptés mm:ss ou hh:mm:ss (ex: 0:12, 01:12:03)
 
 ```
 quickcut-cli/
-├── quickcut.sh       # Script principal
-├── README.md         # Documentation
-└── LICENSE           # Licence libre (MIT)
+├── quickcut.sh              # Script principal
+├── quickcut_segments.txt    # Fichier texte optionnel pour les timecodes
+├── README.md
+└── LICENSE
 ```
 
 ---
