@@ -171,7 +171,12 @@ else
     if [[ ! -f "$TXT_PATH" ]]; then
       echo "📝 Création du fichier texte : ${CYAN}$TXT_PATH${RESET}"
       : > "$TXT_PATH"
-      echo "   ➜ Remplis-le avec des lignes 'début' / 'fin' puis relance le script si besoin."
+      echo "   ➜ Remplis-le avec des lignes 'début' / 'fin' (une ligne par timecode)."
+      echo "   Exemple :"
+      echo "     04:24"
+      echo "     04:32"
+      echo ""
+      read -rp "   Quand c'est fait, appuie sur Entrée pour continuer... " _
     fi
     load_segments_from_txt "$TXT_PATH"
   fi
