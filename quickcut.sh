@@ -151,7 +151,7 @@ echo "${BOLD}Mode de saisie des segments :${RESET}"
 if [[ -f "$DEFAULT_TXT" ]]; then
   echo "  1) Manuel (interactive)"
   echo "  2) Fichier texte (défaut détecté : ${CYAN}$DEFAULT_TXT${RESET})"
-  read -rp "Choix [1/2] (Entrée = 2 si le fichier existe) : " MODE
+  read -rp "Choix [1/2] (Entrée = 2) : " MODE
   if [[ -z "$MODE" || "$MODE" == "2" ]]; then
     TXT_PATH="$DEFAULT_TXT"
     load_segments_from_txt "$TXT_PATH"
@@ -160,13 +160,19 @@ if [[ -f "$DEFAULT_TXT" ]]; then
   fi
 else
   echo "  1) Manuel (interactive)"
-  echo "  2) Fichier texte (tu peux drag & drop un .txt ici)"
+  echo "  2) Fichier texte (${SEGMENTS_TXT_NAME}, ou drag & drop d’un .txt)"
   read -rp "Choix [1/2] (Entrée = 1) : " MODE
   [[ -z "$MODE" ]] && MODE="1"
   if [[ "$MODE" == "2" ]]; then
-    read -rp "Chemin du fichier texte (drag & drop accepté) : " TXT_PATH
+    read -rp "Chemin du fichier texte (Entrée = ${DEFAULT_TXT}) : " TXT_PATH
     # nettoyage des guillemets éventuels après drag & drop
     TXT_PATH="${TXT_PATH%\"}"; TXT_PATH="${TXT_PATH#\"}"
+    [[ -z "$TXT_PATH" ]] && TXT_PATH="$DEFAULT_TXT"
+    if [[ ! -f "$TXT_PATH" ]]; then
+      echo "📝 Création du fichier texte : ${CYAN}$TXT_PATH${RESET}"
+      : > "$TXT_PATH"
+      echo "   ➜ Remplis-le avec des lignes 'début' / 'fin' puis relance le script si besoin."
+    fi
     load_segments_from_txt "$TXT_PATH"
   fi
 fi
